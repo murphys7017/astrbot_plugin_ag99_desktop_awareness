@@ -425,12 +425,19 @@ class DesktopAwarenessRuntime:
         if time.monotonic() - self._last_return_attempt.get(key, -math.inf) < cooldown:
             return
         self._last_return_attempt[key] = time.monotonic()
+        basis = str(returned.get("basis") or "unknown")
+        summary = {
+            "unlock": "系统观察到：屏幕解锁后恢复了输入操作。",
+            "resume": "系统观察到：电脑从休眠恢复后出现了新的输入操作。",
+            "input_resumed": "系统观察到：长时间无输入后恢复了操作；这不能确认用户身体离开过。",
+        }.get(basis, "系统观察到桌面恢复了输入操作。")
         try:
             await self.return_handle.submit(
                 kind="desktop_returned",
                 session=self._session(platform_id, client_uid),
                 payload={
-                    "basis": str(returned.get("basis") or "unknown"),
+                    "basis": basis,
+                    "summary": summary,
                     "inactive_seconds": float(inactive_seconds),
                 },
                 expires_in_seconds=ttl,
