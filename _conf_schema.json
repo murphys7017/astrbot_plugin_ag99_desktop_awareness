@@ -1,0 +1,71 @@
+{
+  "enabled": {
+    "type": "bool",
+    "description": "启用桌面感知事实生成",
+    "default": true
+  },
+  "desktop_observation": {
+    "type": "object",
+    "description": "桌面画面变化观察",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "提交 desktop_changed 事实",
+        "default": true
+      },
+      "event_ttl_seconds": {
+        "type": "int",
+        "description": "变化事实有效期",
+        "default": 60,
+        "minimum": 5,
+        "maximum": 300
+      },
+      "changed_area_threshold_percent": {
+        "type": "float",
+        "description": "变化面积阈值",
+        "default": 15.0,
+        "minimum": 1.0,
+        "maximum": 100.0
+      }
+    }
+  },
+  "desktop_return": {
+    "type": "object",
+    "description": "桌面返回事实观察",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "提交 desktop_returned 事实",
+        "default": false
+      },
+      "idle_after_seconds": {
+        "type": "int",
+        "description": "判定输入空闲的时长",
+        "default": 300,
+        "minimum": 30,
+        "maximum": 3600
+      },
+      "minimum_away_seconds": {
+        "type": "int",
+        "description": "返回事件的最短离开时长",
+        "default": 60,
+        "minimum": 10,
+        "maximum": 3600
+      },
+      "confirmation_seconds": {
+        "type": "int",
+        "description": "桌面端返回确认窗口",
+        "default": 3,
+        "minimum": 3,
+        "maximum": 10
+      },
+      "cooldown_seconds": {
+        "type": "int",
+        "description": "返回事实冷却时间",
+        "default": 900,
+        "minimum": 0,
+        "maximum": 86400
+      }
+    }
+  }
+}
