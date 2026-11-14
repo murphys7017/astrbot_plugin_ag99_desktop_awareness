@@ -19,7 +19,9 @@ authorize the facts after the runtime moves into this repository.
 The source of truth is this repository. The generated runtime copy is
 `C:\Users\Administrator\Downloads\AstrBot\data\plugins\astrbot_plugin_ag99_desktop_awareness`.
 Edit the source repository and commit there. The local `post-commit` hook runs
-`deploy_desktop_awareness.ps1` and synchronizes the plugin files.
+`deploy_desktop_awareness.ps1` and synchronizes the plugin files. After a fresh
+clone, run `powershell -ExecutionPolicy Bypass -File .\setup_hooks.ps1` once to
+activate the tracked hook.
 
 Enable frame capture and `desktop_presence_capture` in the AG99live Adapter.
 Enable desktop observation in this plugin for `desktop_changed`, and enable

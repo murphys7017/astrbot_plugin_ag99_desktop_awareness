@@ -1,7 +1,7 @@
 name: astrbot_plugin_ag99_desktop_awareness
 display_name: AG99 Desktop Awareness
 desc: Subscribe to AG99live desktop state and submit bounded desktop facts to Personal Runtime.
-version: 0.1.0
+version: 1.0.0
 author: murphys7017
 repo: https://github.com/murphys7017/astrbot_plugin_ag99_desktop_awareness
 astrbot_version: ">=4.29.0"

@@ -14,7 +14,7 @@ from .runtime import DesktopAwarenessRuntime
     "astrbot_plugin_ag99_desktop_awareness",
     "AG99",
     "Subscribe to AG99live desktop state and submit desktop facts.",
-    "0.1.0",
+    "1.0.0",
 )
 class DesktopAwarenessPlugin(Star):
     """Consume Core desktop snapshots without controlling screenshot capture."""
