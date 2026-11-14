@@ -4,4 +4,4 @@ desc: Subscribe to AG99live desktop state and submit bounded desktop facts to Pe
 version: 1.0.0
 author: murphys7017
 repo: https://github.com/murphys7017/astrbot_plugin_ag99_desktop_awareness
-astrbot_version: ">=4.29.0"
+astrbot_version: ">=4.29.0b1"
