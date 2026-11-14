@@ -8,7 +8,6 @@ import math
 import time
 from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
 
 from astrbot.api import (
     DesktopStateSnapshot,
@@ -80,12 +79,9 @@ class DesktopAwarenessRuntime:
             DesktopReturnSensor()
         )
         self._reconcile_task: asyncio.Task | None = None
-        self._presence_task: asyncio.Task | None = None
         self._subscriptions: dict[str, Any] = {}
         self._baselines: dict[str, _FrameBaseline] = {}
-        self._presence_workers: dict[str, asyncio.Task] = {}
-        self._presence_signatures: dict[str, tuple[Any, ...]] = {}
-        self._presence_monitor_ids: dict[str, tuple[tuple[Any, ...], str]] = {}
+        self._presence_identities: dict[str, tuple[str, int]] = {}
         self._last_return_attempt: dict[tuple[str, str], float] = {}
 
     def start(self) -> None:
@@ -97,26 +93,15 @@ class DesktopAwarenessRuntime:
                 self._reconcile_subscriptions(),
                 name="ag99.desktop_awareness.subscriptions",
             )
-        if self._presence_task is None:
-            self._presence_task = asyncio.create_task(
-                self._reconcile_presence_workers(),
-                name="ag99.desktop_awareness.presence",
-            )
 
     async def stop(self) -> None:
-        tasks = [
-            task
-            for task in (self._reconcile_task, self._presence_task)
-            if task is not None
-        ]
-        tasks.extend(self._presence_workers.values())
+        tasks = [task for task in (self._reconcile_task,) if task is not None]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._reconcile_task = None
-        self._presence_task = None
-        self._presence_workers.clear()
-        self._presence_signatures.clear()
+        self._presence_identities.clear()
+        self._last_return_attempt.clear()
         for subscription in self._subscriptions.values():
             subscription.close()
         self._subscriptions.clear()
@@ -153,7 +138,13 @@ class DesktopAwarenessRuntime:
                     if platform_id in active_ids:
                         continue
                     self._subscriptions.pop(platform_id).close()
-                    self._baselines.pop(platform_id, None)
+                    baseline = self._baselines.pop(platform_id, None)
+                    if baseline is not None and baseline.cancel_event is not None:
+                        baseline.cancel_event.set()
+                    self._presence_identities.pop(platform_id, None)
+                    for key in tuple(self._last_return_attempt):
+                        if key[0] == platform_id:
+                            self._last_return_attempt.pop(key, None)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -164,13 +155,20 @@ class DesktopAwarenessRuntime:
         projection = getattr(envelope, "payload", None)
         if not isinstance(projection, DesktopStateSnapshot):
             return
+        if not projection.connected:
+            baseline = self._baselines.pop(platform_id, None)
+            if baseline is not None and baseline.cancel_event is not None:
+                baseline.cancel_event.set()
+            self._presence_identities.pop(platform_id, None)
+            return
+
+        await self._on_presence_snapshot(platform_id, projection.presence)
+
         frame = projection.latest_frame
-        if (
-            not projection.connected
-            or not projection.observation_supported
-            or frame is None
-        ):
-            self._baselines.pop(platform_id, None)
+        if not projection.observation_supported or frame is None:
+            baseline = self._baselines.pop(platform_id, None)
+            if baseline is not None and baseline.cancel_event is not None:
+                baseline.cancel_event.set()
             return
         attachment = self.snapshot_hub.get_attachment(frame.attachment_ref)
         image = getattr(attachment, "payload", None)
@@ -199,8 +197,6 @@ class DesktopAwarenessRuntime:
             return
 
         previous_image = baseline.image
-        baseline.revision = frame.revision
-        baseline.image = image
         try:
             changed = await asyncio.to_thread(
                 changed_area_percent,
@@ -214,6 +210,8 @@ class DesktopAwarenessRuntime:
                 type(exc).__name__,
             )
             return
+        baseline.revision = frame.revision
+        baseline.image = image
         settings = self._section("desktop_observation")
         threshold = _number(
             settings,
@@ -299,102 +297,33 @@ class DesktopAwarenessRuntime:
                 type(exc).__name__,
             )
 
-    async def _reconcile_presence_workers(self) -> None:
-        while True:
-            try:
-                settings = self._presence_settings()
-                active_ids = set()
-                if settings is not None:
-                    for platform in self._platforms():
-                        platform_id = self._platform_id(platform)
-                        broker = getattr(platform, "desktop_presence", None)
-                        if not platform_id or broker is None:
-                            continue
-                        signature = (
-                            str(getattr(platform, "client_uid", "") or ""),
-                            int(getattr(broker, "generation", 0) or 0),
-                            tuple(settings.items()),
-                        )
-                        active_ids.add(platform_id)
-                        previous_signature = self._presence_signatures.get(platform_id)
-                        if (
-                            platform_id in self._presence_workers
-                            and previous_signature == signature
-                        ):
-                            continue
-                        previous_task = self._presence_workers.pop(platform_id, None)
-                        if previous_task is not None:
-                            previous_task.cancel()
-                            await asyncio.gather(previous_task, return_exceptions=True)
-                            task = asyncio.create_task(
-                                self._poll_presence(platform),
-                                name=f"ag99.desktop_awareness.presence:{platform_id}",
-                            )
-                            self._presence_workers[platform_id] = task
-                        self._presence_signatures[platform_id] = signature
-                for platform_id in tuple(self._presence_workers):
-                    if platform_id in active_ids:
-                        continue
-                    self._presence_workers.pop(platform_id).cancel()
-                    self._presence_signatures.pop(platform_id, None)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Desktop awareness presence reconciliation failed")
-            await asyncio.sleep(2)
-
-    async def _poll_presence(self, platform: Any) -> None:
-        platform_id = self._platform_id(platform)
-        client_uid = str(getattr(platform, "client_uid", "") or "")
-        last_identity: tuple[str, int] | None = None
-        while True:
-            try:
-                settings = self._presence_settings()
-                if settings is None:
-                    return
-                signature = tuple(settings.items())
-                monitor_entry = self._presence_monitor_ids.get(platform_id)
-                if monitor_entry is None or monitor_entry[0] != signature:
-                    monitor_id = uuid4().hex
-                    self._presence_monitor_ids[platform_id] = (signature, monitor_id)
-                else:
-                    monitor_id = monitor_entry[1]
-                broker = getattr(platform, "desktop_presence", None)
-                if broker is None or not broker.supported:
-                    await asyncio.sleep(1)
-                    continue
-                snapshot = await broker.read(monitor_id, settings)
-                returned = snapshot.get("returned")
-                identity = (snapshot.get("boot_id"), snapshot.get("sequence"))
-                if (
-                    not isinstance(identity[0], str)
-                    or not isinstance(identity[1], int)
-                    or last_identity == identity
-                ):
-                    await asyncio.sleep(1)
-                    continue
-                last_identity = identity
-                if not isinstance(returned, dict):
-                    await asyncio.sleep(1)
-                    continue
-                if not self._is_quiet(platform):
-                    await asyncio.sleep(1)
-                    continue
-                await self._submit_returned(
-                    platform_id,
-                    client_uid,
-                    returned,
-                    snapshot,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning(
-                    "Desktop awareness presence poll failed platform=%s error=%s",
-                    platform_id,
-                    type(exc).__name__,
-                )
-            await asyncio.sleep(1)
+    async def _on_presence_snapshot(
+        self,
+        platform_id: str,
+        presence: dict[str, Any] | None,
+    ) -> None:
+        if not isinstance(presence, dict):
+            return
+        identity = (presence.get("boot_id"), presence.get("sequence"))
+        if (
+            not isinstance(identity[0], str)
+            or not isinstance(identity[1], int)
+            or self._presence_identities.get(platform_id) == identity
+        ):
+            return
+        self._presence_identities[platform_id] = identity
+        returned = presence.get("returned")
+        if not isinstance(returned, dict):
+            return
+        platform = self._platform_by_id(platform_id)
+        if platform is None or not self._is_quiet(platform):
+            return
+        await self._submit_returned(
+            platform_id,
+            str(getattr(platform, "client_uid", "") or ""),
+            returned,
+            presence,
+        )
 
     async def _submit_returned(
         self,
@@ -424,7 +353,6 @@ class DesktopAwarenessRuntime:
         key = (platform_id, str(snapshot.get("boot_id") or ""))
         if time.monotonic() - self._last_return_attempt.get(key, -math.inf) < cooldown:
             return
-        self._last_return_attempt[key] = time.monotonic()
         basis = str(returned.get("basis") or "unknown")
         summary = {
             "unlock": "系统观察到：屏幕解锁后恢复了输入操作。",
@@ -443,6 +371,7 @@ class DesktopAwarenessRuntime:
                 expires_in_seconds=ttl,
                 coalesce_key="desktop_return",
             )
+            self._last_return_attempt[key] = time.monotonic()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -455,6 +384,12 @@ class DesktopAwarenessRuntime:
     def _platforms(self) -> list[Any]:
         manager = getattr(self.context, "platform_manager", None)
         return list(getattr(manager, "platform_insts", ()) or ())
+
+    def _platform_by_id(self, platform_id: str) -> Any | None:
+        for platform in self._platforms():
+            if self._platform_id(platform) == platform_id:
+                return platform
+        return None
 
     @staticmethod
     def _platform_id(platform: Any) -> str:
@@ -472,22 +407,6 @@ class DesktopAwarenessRuntime:
     def _section(self, name: str) -> dict[str, Any]:
         value = self.config.get(name, {})
         return value if isinstance(value, dict) else {}
-
-    def _presence_settings(self) -> dict[str, Any] | None:
-        section = self._section("desktop_return")
-        if not bool(section.get("enabled", False)):
-            return None
-        return {
-            "idle_after_seconds": int(
-                _number(section, "idle_after_seconds", 300, 30, 3600)
-            ),
-            "minimum_away_seconds": int(
-                _number(section, "minimum_away_seconds", 60, 10, 3600)
-            ),
-            "confirmation_seconds": int(
-                _number(section, "confirmation_seconds", 3, 3, 10)
-            ),
-        }
 
     @staticmethod
     def _is_quiet(platform: Any) -> bool:

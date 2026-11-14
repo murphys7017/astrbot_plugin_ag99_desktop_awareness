@@ -38,27 +38,6 @@
         "description": "提交 desktop_returned 事实",
         "default": false
       },
-      "idle_after_seconds": {
-        "type": "int",
-        "description": "判定输入空闲的时长",
-        "default": 300,
-        "minimum": 30,
-        "maximum": 3600
-      },
-      "minimum_away_seconds": {
-        "type": "int",
-        "description": "返回事件的最短离开时长",
-        "default": 60,
-        "minimum": 10,
-        "maximum": 3600
-      },
-      "confirmation_seconds": {
-        "type": "int",
-        "description": "桌面端返回确认窗口",
-        "default": 3,
-        "minimum": 3,
-        "maximum": 10
-      },
       "cooldown_seconds": {
         "type": "int",
         "description": "返回事实冷却时间",
