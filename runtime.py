@@ -162,7 +162,11 @@ class DesktopAwarenessRuntime:
             self._presence_identities.pop(platform_id, None)
             return
 
-        await self._on_presence_snapshot(platform_id, projection.presence)
+        await self._on_presence_snapshot(
+            platform_id,
+            projection.client_uid,
+            projection.presence,
+        )
 
         frame = projection.latest_frame
         if not projection.observation_supported or frame is None:
@@ -300,6 +304,7 @@ class DesktopAwarenessRuntime:
     async def _on_presence_snapshot(
         self,
         platform_id: str,
+        client_uid: str,
         presence: dict[str, Any] | None,
     ) -> None:
         if not isinstance(presence, dict):
@@ -315,12 +320,9 @@ class DesktopAwarenessRuntime:
         returned = presence.get("returned")
         if not isinstance(returned, dict):
             return
-        platform = self._platform_by_id(platform_id)
-        if platform is None or not self._is_quiet(platform):
-            return
         await self._submit_returned(
             platform_id,
-            str(getattr(platform, "client_uid", "") or ""),
+            str(client_uid or ""),
             returned,
             presence,
         )
@@ -385,12 +387,6 @@ class DesktopAwarenessRuntime:
         manager = getattr(self.context, "platform_manager", None)
         return list(getattr(manager, "platform_insts", ()) or ())
 
-    def _platform_by_id(self, platform_id: str) -> Any | None:
-        for platform in self._platforms():
-            if self._platform_id(platform) == platform_id:
-                return platform
-        return None
-
     @staticmethod
     def _platform_id(platform: Any) -> str:
         value = getattr(platform, "platform_id", None)
@@ -407,20 +403,5 @@ class DesktopAwarenessRuntime:
     def _section(self, name: str) -> dict[str, Any]:
         value = self.config.get(name, {})
         return value if isinstance(value, dict) else {}
-
-    @staticmethod
-    def _is_quiet(platform: Any) -> bool:
-        coordinator = getattr(platform, "turn_coordinator", None)
-        window = getattr(coordinator, "observation_window", None)
-        snapshot = getattr(window, "snapshot", None)
-        if not callable(snapshot):
-            return True
-        token = snapshot(0)
-        if token is None:
-            return False
-        revision = getattr(window, "revision", 0)
-        checker = getattr(window, "is_current", None)
-        return bool(checker(token, 0, revision)) if callable(checker) else True
-
 
 __all__ = ["DesktopAwarenessRuntime"]
