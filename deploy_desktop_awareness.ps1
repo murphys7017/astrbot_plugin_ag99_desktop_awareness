@@ -23,6 +23,7 @@ function Should-SkipPath {
         $segments -contains ".pytest_cache" -or
         $segments -contains ".ruff_cache" -or
         $segments -contains ".venv" -or
+        $segments -contains "data" -or
         $segments -contains "tests") {
         return $true
     }
