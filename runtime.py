@@ -83,6 +83,7 @@ class DesktopAwarenessRuntime:
         self._baselines: dict[str, _FrameBaseline] = {}
         self._presence_identities: dict[str, tuple[str, int]] = {}
         self._last_return_attempt: dict[tuple[str, str], float] = {}
+        self._return_cancel_events: dict[tuple[str, str], asyncio.Event] = {}
 
     def start(self) -> None:
         if self.snapshot_hub is None:
@@ -102,6 +103,7 @@ class DesktopAwarenessRuntime:
         self._reconcile_task = None
         self._presence_identities.clear()
         self._last_return_attempt.clear()
+        self._cancel_all_returns()
         for subscription in self._subscriptions.values():
             subscription.close()
         self._subscriptions.clear()
@@ -145,6 +147,7 @@ class DesktopAwarenessRuntime:
                     for key in tuple(self._last_return_attempt):
                         if key[0] == platform_id:
                             self._last_return_attempt.pop(key, None)
+                    self._cancel_returns_for_platform(platform_id)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -160,6 +163,7 @@ class DesktopAwarenessRuntime:
             if baseline is not None and baseline.cancel_event is not None:
                 baseline.cancel_event.set()
             self._presence_identities.pop(platform_id, None)
+            self._cancel_returns_for_platform(platform_id)
             return
 
         await self._on_presence_snapshot(
@@ -209,9 +213,10 @@ class DesktopAwarenessRuntime:
             )
         except Exception as exc:
             logger.warning(
-                "Desktop awareness comparison failed platform=%s error=%s",
+                "Desktop awareness comparison failed platform=%s error=%s detail=%s",
                 platform_id,
                 type(exc).__name__,
+                str(exc),
             )
             return
         baseline.revision = frame.revision
@@ -309,6 +314,7 @@ class DesktopAwarenessRuntime:
     ) -> None:
         if not isinstance(presence, dict):
             return
+        self._cancel_returns_for_other_client(platform_id, client_uid)
         identity = (presence.get("boot_id"), presence.get("sequence"))
         if (
             not isinstance(identity[0], str)
@@ -319,6 +325,8 @@ class DesktopAwarenessRuntime:
         self._presence_identities[platform_id] = identity
         returned = presence.get("returned")
         if not isinstance(returned, dict):
+            if presence.get("state") == "active":
+                self._cancel_returns_for_platform(platform_id)
             return
         await self._submit_returned(
             platform_id,
@@ -334,7 +342,12 @@ class DesktopAwarenessRuntime:
         returned: dict[str, Any],
         snapshot: dict[str, Any],
     ) -> None:
+        key = (platform_id, client_uid)
+        previous_cancel_event = self._return_cancel_events.pop(key, None)
+        if previous_cancel_event is not None:
+            previous_cancel_event.set()
         if not bool(self._section("desktop_return").get("enabled", False)):
+            self._cancel_returns_for_platform(platform_id)
             return
         inactive_seconds = returned.get("inactive_seconds")
         age_seconds = returned.get("age_seconds")
@@ -352,9 +365,10 @@ class DesktopAwarenessRuntime:
             0.0,
             86400.0,
         )
-        key = (platform_id, str(snapshot.get("boot_id") or ""))
         if time.monotonic() - self._last_return_attempt.get(key, -math.inf) < cooldown:
             return
+        cancel_event = asyncio.Event()
+        self._return_cancel_events[key] = cancel_event
         basis = str(returned.get("basis") or "unknown")
         summary = {
             "unlock": "系统观察到：屏幕解锁后恢复了输入操作。",
@@ -372,6 +386,7 @@ class DesktopAwarenessRuntime:
                 },
                 expires_in_seconds=ttl,
                 coalesce_key="desktop_return",
+                cancel_event=cancel_event,
             )
             self._last_return_attempt[key] = time.monotonic()
         except asyncio.CancelledError:
@@ -382,6 +397,25 @@ class DesktopAwarenessRuntime:
                 platform_id,
                 type(exc).__name__,
             )
+
+    def _cancel_returns_for_platform(self, platform_id: str) -> None:
+        for key in tuple(self._return_cancel_events):
+            if key[0] != platform_id:
+                continue
+            event = self._return_cancel_events.pop(key)
+            event.set()
+
+    def _cancel_returns_for_other_client(self, platform_id: str, client_uid: str) -> None:
+        for key in tuple(self._return_cancel_events):
+            if key[0] != platform_id or key[1] == client_uid:
+                continue
+            event = self._return_cancel_events.pop(key)
+            event.set()
+
+    def _cancel_all_returns(self) -> None:
+        for event in self._return_cancel_events.values():
+            event.set()
+        self._return_cancel_events.clear()
 
     def _platforms(self) -> list[Any]:
         manager = getattr(self.context, "platform_manager", None)

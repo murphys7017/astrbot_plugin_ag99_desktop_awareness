@@ -10,6 +10,10 @@ presence protocol, and publishes state through Core. The plugin subscribes to
 that state and never sends a screenshot or Presence request to AG99live. It
 never stores a raw frame in an Observation.
 
+Desktop-return submissions carry a cancellable token. A newer return snapshot,
+client input resuming, a disconnected client, or a disabled sensor withdraws
+the older pending fact before Personal Runtime can act on it.
+
 The sensor keeps the legacy observation target identifier `ag99live` so existing
 `platform_settings.personal_runtime_observation_targets` entries continue to
 authorize the facts after the runtime moves into this repository.
