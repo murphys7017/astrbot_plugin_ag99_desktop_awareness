@@ -1,5 +1,7 @@
 # AG99 Desktop Awareness
 
+Maintained by murphys7017 for AG99live. This repository contains the desktop change detector used by the AG99 Personal Runtime. [AG99live desktop](https://github.com/murphys7017/AG99live)
+
 This plugin consumes the current `desktop_state` snapshot published by the
 AG99live Adapter through AstrBot Core `SnapshotHub`. It owns desktop change
 comparison, desktop return detection, and the `desktop_changed`/

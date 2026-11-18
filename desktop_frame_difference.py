@@ -9,6 +9,10 @@ import numpy as np
 from PIL import Image
 
 
+MAX_FRAME_WIDTH = 1600
+MAX_FRAME_HEIGHT = 900
+
+
 def changed_area_percent(previous: str, current: str) -> float:
     """Estimate changed area using non-overlapping RGB SSIM blocks."""
     if previous == current:
@@ -21,7 +25,10 @@ def changed_area_percent(previous: str, current: str) -> float:
         with Image.open(BytesIO(raw)) as image:
             if (
                 image.format != "JPEG"
-                or not 1 <= min(image.size) <= max(image.size) <= 768
+                or not (
+                    1 <= image.width <= MAX_FRAME_WIDTH
+                    and 1 <= image.height <= MAX_FRAME_HEIGHT
+                )
             ):
                 raise ValueError("desktop_comparison_dimensions_invalid")
             small = image.convert("RGB").resize((192, 108), Image.Resampling.BILINEAR)
